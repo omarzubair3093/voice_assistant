@@ -1,5 +1,5 @@
 streamlit
 openai
 boto3
-numpy
+streamlit-audiorecorder
 python-dotenv

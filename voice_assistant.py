@@ -1,8 +1,7 @@
 import streamlit as st
 import openai
 import boto3
-import numpy as np
-from datetime import datetime
+from audiorecorder import audiorecorder
 import tempfile
 import os
 
@@ -10,8 +9,23 @@ import os
 st.set_page_config(
     page_title="Voice Assistant",
     page_icon="🎙️",
-    layout="wide"
+    layout="wide",
+    initial_sidebar_state="collapsed"
 )
+
+# Custom CSS for dark theme
+st.markdown("""
+    <style>
+    .stApp {
+        background-color: #1E1E1E;
+        color: #FFFFFF;
+    }
+    .stButton>button {
+        background-color: #2E2E2E;
+        color: #FFFFFF;
+    }
+    </style>
+""", unsafe_allow_html=True)
 
 class VoiceAssistant:
     def __init__(self):
@@ -26,12 +40,12 @@ class VoiceAssistant:
             region_name=st.secrets["AWS_REGION"]
         )
 
-    def process_audio(self, audio_bytes):
+    def process_audio(self, audio_data):
         """Process audio using OpenAI Whisper"""
         try:
-            # Save audio bytes to a temporary file
+            # Save audio data to a temporary file
             with tempfile.NamedTemporaryFile(delete=False, suffix=".wav") as tmp_file:
-                tmp_file.write(audio_bytes)
+                tmp_file.write(audio_data)
                 tmp_file.flush()
                 
                 # Transcribe using Whisper
@@ -79,22 +93,26 @@ class VoiceAssistant:
 
 def main():
     st.title("🎙️ Voice Assistant")
-    st.write("Record your message and I'll respond!")
+    st.write("Click the microphone to start/stop recording!")
 
     # Initialize the voice assistant
     assistant = VoiceAssistant()
 
-    # Audio recorder
-    audio_bytes = st.audio_recorder(
-        key="voice_recorder",
-        text="Click to record",
-    )
+    # Initialize audio recorder
+    audio_recorder = audiorecorder("Click to record", "Recording...")
 
-    if audio_bytes:
-        st.audio(audio_bytes, format="audio/wav")
+    # Get the audio data
+    audio_data = audio_recorder.get_audio()
+    
+    if len(audio_data) > 0:
+        # Add an audio player to play the recording
+        st.audio(audio_data.export().read())
         
         if st.button("Process Recording"):
             with st.spinner("Processing your message..."):
+                # Convert audio data to bytes
+                audio_bytes = audio_data.export().read()
+                
                 # Transcribe audio
                 transcript = assistant.process_audio(audio_bytes)
                 if transcript:
