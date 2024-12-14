@@ -1,8 +1,8 @@
 import streamlit as st
+from streamlit.components.v1 import html
 import openai
 import boto3
 from io import BytesIO
-from custom_mic_recorder import mic_recorder
 import time
 
 # Page config
@@ -121,18 +121,16 @@ def main():
     tab1, tab2 = st.tabs(["Record Audio", "Upload Audio"])
 
     with tab1:
-        st.write("Click the microphone to start recording")
-        audio = mic_recorder(
-            key="voice_recorder",
-            start_prompt="Start recording",
-            stop_prompt="Stop recording",
-            just_once=True
-        )
+        st.write("Click the button below to start recording")
+        
+        # Using st.experimental_media_recorder
+        audio = st.experimental_media_recorder("audio", "Record", "Stop Recording")
         
         if audio:
             st.audio(audio)
             if st.button("Process Recording", key="process_recording"):
-                process_audio_response(assistant, BytesIO(audio))
+                audio_bytes = BytesIO(audio.read())
+                process_audio_response(assistant, audio_bytes)
 
     with tab2:
         audio_file = st.file_uploader("Upload audio file", type=['wav', 'mp3', 'm4a'])
@@ -146,9 +144,9 @@ def main():
         st.write("""
         **Option 1: Record directly**
         1. Go to the 'Record Audio' tab
-        2. Click the microphone button to start recording
+        2. Click 'Record' to start recording
         3. Speak your message
-        4. Click again to stop recording
+        4. Click 'Stop Recording' when done
         5. Click 'Process Recording' to get a response
 
         **Option 2: Upload audio**

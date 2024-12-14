@@ -2,4 +2,3 @@ streamlit
 openai
 boto3
 python-dotenv
-streamlit-custom-mic-recorder
