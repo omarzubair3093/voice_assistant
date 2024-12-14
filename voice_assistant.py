@@ -1,9 +1,8 @@
 import streamlit as st
 import openai
 import boto3
-from audiorecorder import audiorecorder
-import tempfile
-import os
+from io import BytesIO
+import time
 
 # Page config
 st.set_page_config(
@@ -40,24 +39,14 @@ class VoiceAssistant:
             region_name=st.secrets["AWS_REGION"]
         )
 
-    def process_audio(self, audio_data):
+    def process_audio(self, audio_file):
         """Process audio using OpenAI Whisper"""
         try:
-            # Save audio data to a temporary file
-            with tempfile.NamedTemporaryFile(delete=False, suffix=".wav") as tmp_file:
-                tmp_file.write(audio_data)
-                tmp_file.flush()
-                
-                # Transcribe using Whisper
-                with open(tmp_file.name, "rb") as audio_file:
-                    transcript = self.openai_client.audio.transcriptions.create(
-                        model="whisper-1",
-                        file=audio_file
-                    )
-                
-                # Clean up temp file
-                os.unlink(tmp_file.name)
-                return transcript.text
+            transcript = self.openai_client.audio.transcriptions.create(
+                model="whisper-1",
+                file=audio_file
+            )
+            return transcript.text
         except Exception as e:
             st.error(f"Error processing audio: {str(e)}")
             return None
@@ -93,28 +82,24 @@ class VoiceAssistant:
 
 def main():
     st.title("🎙️ Voice Assistant")
-    st.write("Click the microphone to start/stop recording!")
+    st.write("Upload an audio file or record a message!")
 
     # Initialize the voice assistant
     assistant = VoiceAssistant()
 
-    # Initialize audio recorder
-    audio_recorder = audiorecorder("Click to record", "Recording...")
+    # File uploader for audio
+    audio_file = st.file_uploader("Upload audio file", type=['wav', 'mp3', 'm4a'])
 
-    # Get the audio data
-    audio_data = audio_recorder.get_audio()
-    
-    if len(audio_data) > 0:
-        # Add an audio player to play the recording
-        st.audio(audio_data.export().read())
+    if audio_file:
+        st.audio(audio_file)
         
-        if st.button("Process Recording"):
+        if st.button("Process Audio"):
             with st.spinner("Processing your message..."):
-                # Convert audio data to bytes
-                audio_bytes = audio_data.export().read()
+                # Reset file pointer
+                audio_file.seek(0)
                 
                 # Transcribe audio
-                transcript = assistant.process_audio(audio_bytes)
+                transcript = assistant.process_audio(audio_file)
                 if transcript:
                     st.write("You said:", transcript)
                     
@@ -127,6 +112,25 @@ def main():
                         audio_response = assistant.text_to_speech(response)
                         if audio_response:
                             st.audio(audio_response, format='audio/mp3')
+                            
+                            # Option to download response
+                            st.download_button(
+                                label="Download Response",
+                                data=audio_response,
+                                file_name="ai_response.mp3",
+                                mime="audio/mp3"
+                            )
+
+    # Add instructions
+    with st.expander("How to use"):
+        st.write("""
+        1. Upload an audio file containing your message
+        2. Click 'Process Audio' to get a response
+        3. Listen to the AI's response
+        4. Optionally download the response audio
+        
+        Supported formats: WAV, MP3, M4A
+        """)
 
 if __name__ == "__main__":
     main()
