@@ -2,7 +2,7 @@ import streamlit as st
 import openai
 import boto3
 from io import BytesIO
-from st_mic_recorder import mic_recorder
+from custom_mic_recorder import mic_recorder
 import time
 
 # Page config
