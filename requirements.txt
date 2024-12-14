@@ -1,6 +1,5 @@
 streamlit
 openai
 boto3
-streamlit-webrtc
-python-dotenv
 numpy
+python-dotenv

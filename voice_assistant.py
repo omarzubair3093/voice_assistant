@@ -1,12 +1,10 @@
 import streamlit as st
-import numpy as np
 import openai
 import boto3
-from streamlit_webrtc import webrtc_streamer
-import av
-import queue
-import threading
+import numpy as np
 from datetime import datetime
+import tempfile
+import os
 
 # Page config
 st.set_page_config(
@@ -15,7 +13,7 @@ st.set_page_config(
     layout="wide"
 )
 
-class AudioProcessor:
+class VoiceAssistant:
     def __init__(self):
         # Initialize OpenAI client
         self.openai_client = openai.OpenAI(api_key=st.secrets["OPENAI_API_KEY"])
@@ -27,30 +25,27 @@ class AudioProcessor:
             aws_secret_access_key=st.secrets["AWS_SECRET_ACCESS_KEY"],
             region_name=st.secrets["AWS_REGION"]
         )
-        
-        # Initialize audio buffer
-        self.audio_frames = []
-        self.audio_buffer = queue.Queue()
 
-    def audio_frame_callback(self, frame):
-        """Process incoming audio frames"""
+    def process_audio(self, audio_bytes):
+        """Process audio using OpenAI Whisper"""
         try:
-            audio_data = frame.to_ndarray()
-            self.audio_frames.append(audio_data)
+            # Save audio bytes to a temporary file
+            with tempfile.NamedTemporaryFile(delete=False, suffix=".wav") as tmp_file:
+                tmp_file.write(audio_bytes)
+                tmp_file.flush()
+                
+                # Transcribe using Whisper
+                with open(tmp_file.name, "rb") as audio_file:
+                    transcript = self.openai_client.audio.transcriptions.create(
+                        model="whisper-1",
+                        file=audio_file
+                    )
+                
+                # Clean up temp file
+                os.unlink(tmp_file.name)
+                return transcript.text
         except Exception as e:
-            st.error(f"Error processing audio frame: {str(e)}")
-
-    def process_audio(self, audio_data):
-        """Convert audio to text using OpenAI Whisper"""
-        try:
-            response = self.openai_client.audio.transcriptions.create(
-                model="whisper-1",
-                file=audio_data,
-                response_format="text"
-            )
-            return response
-        except Exception as e:
-            st.error(f"Error transcribing audio: {str(e)}")
+            st.error(f"Error processing audio: {str(e)}")
             return None
 
     def get_ai_response(self, text):
@@ -84,68 +79,36 @@ class AudioProcessor:
 
 def main():
     st.title("🎙️ Voice Assistant")
-    st.write("Speak into your microphone and I'll respond!")
+    st.write("Record your message and I'll respond!")
 
-    # Initialize processor
-    processor = AudioProcessor()
+    # Initialize the voice assistant
+    assistant = VoiceAssistant()
 
-    # WebRTC Audio configuration
-    webrtc_ctx = webrtc_streamer(
-        key="voice-assistant",
-        audio_receiver_size=1024,
-        rtc_configuration={
-            "iceServers": [{"urls": ["stun:stun.l.google.com:19302"]}]
-        },
-        media_stream_constraints={
-            "video": False,
-            "audio": True
-        }
+    # Audio recorder
+    audio_bytes = st.audio_recorder(
+        key="voice_recorder",
+        text="Click to record",
     )
 
-    if "audio_buffer" not in st.session_state:
-        st.session_state["audio_buffer"] = []
-
-    # Handle audio input
-    if webrtc_ctx.audio_receiver:
-        try:
-            audio_frames = webrtc_ctx.audio_receiver.get_frames()
-            for audio_frame in audio_frames:
-                sound = audio_frame.to_ndarray()
-                st.session_state["audio_buffer"].append(sound)
-        except queue.Empty:
-            pass
-
-    # Process recording button
-    if st.button("Process Recording"):
-        if st.session_state["audio_buffer"]:
+    if audio_bytes:
+        st.audio(audio_bytes, format="audio/wav")
+        
+        if st.button("Process Recording"):
             with st.spinner("Processing your message..."):
-                # Combine audio frames
-                audio_data = np.concatenate(st.session_state["audio_buffer"])
-                
                 # Transcribe audio
-                transcript = processor.process_audio(audio_data)
+                transcript = assistant.process_audio(audio_bytes)
                 if transcript:
                     st.write("You said:", transcript)
                     
                     # Get AI response
-                    response = processor.get_ai_response(transcript)
+                    response = assistant.get_ai_response(transcript)
                     if response:
                         st.write("Response:", response)
                         
                         # Convert to speech
-                        audio_response = processor.text_to_speech(response)
+                        audio_response = assistant.text_to_speech(response)
                         if audio_response:
                             st.audio(audio_response, format='audio/mp3')
-            
-            # Clear the buffer
-            st.session_state["audio_buffer"] = []
-        else:
-            st.warning("No audio recorded. Please speak into your microphone first.")
-
-    # Clear button
-    if st.button("Clear Recording"):
-        st.session_state["audio_buffer"] = []
-        st.success("Recording cleared!")
 
 if __name__ == "__main__":
     main()
