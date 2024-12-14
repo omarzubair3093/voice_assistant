@@ -2,6 +2,7 @@ import streamlit as st
 import openai
 import boto3
 from io import BytesIO
+from st_mic_recorder import mic_recorder
 import time
 
 # Page config
@@ -22,6 +23,9 @@ st.markdown("""
     .stButton>button {
         background-color: #2E2E2E;
         color: #FFFFFF;
+    }
+    .css-1x8cf1d {
+        background-color: #2E2E2E;
     }
     </style>
 """, unsafe_allow_html=True)
@@ -80,56 +84,83 @@ class VoiceAssistant:
             st.error(f"Error converting to speech: {str(e)}")
             return None
 
+def process_audio_response(assistant, audio_data):
+    """Process audio and get AI response"""
+    with st.spinner("Processing your message..."):
+        # Transcribe audio
+        transcript = assistant.process_audio(audio_data)
+        if transcript:
+            st.write("You said:", transcript)
+            
+            # Get AI response
+            response = assistant.get_ai_response(transcript)
+            if response:
+                st.write("Response:", response)
+                
+                # Convert to speech
+                audio_response = assistant.text_to_speech(response)
+                if audio_response:
+                    st.audio(audio_response, format='audio/mp3')
+                    
+                    # Option to download response
+                    st.download_button(
+                        label="Download Response",
+                        data=audio_response,
+                        file_name="ai_response.mp3",
+                        mime="audio/mp3"
+                    )
+
 def main():
     st.title("🎙️ Voice Assistant")
-    st.write("Upload an audio file or record a message!")
+    st.write("Record a message or upload an audio file!")
 
     # Initialize the voice assistant
     assistant = VoiceAssistant()
 
-    # File uploader for audio
-    audio_file = st.file_uploader("Upload audio file", type=['wav', 'mp3', 'm4a'])
+    # Create tabs for different input methods
+    tab1, tab2 = st.tabs(["Record Audio", "Upload Audio"])
 
-    if audio_file:
-        st.audio(audio_file)
+    with tab1:
+        st.write("Click the microphone to start recording")
+        audio = mic_recorder(
+            key="voice_recorder",
+            start_prompt="Start recording",
+            stop_prompt="Stop recording",
+            just_once=True
+        )
         
-        if st.button("Process Audio"):
-            with st.spinner("Processing your message..."):
-                # Reset file pointer
-                audio_file.seek(0)
-                
-                # Transcribe audio
-                transcript = assistant.process_audio(audio_file)
-                if transcript:
-                    st.write("You said:", transcript)
-                    
-                    # Get AI response
-                    response = assistant.get_ai_response(transcript)
-                    if response:
-                        st.write("Response:", response)
-                        
-                        # Convert to speech
-                        audio_response = assistant.text_to_speech(response)
-                        if audio_response:
-                            st.audio(audio_response, format='audio/mp3')
-                            
-                            # Option to download response
-                            st.download_button(
-                                label="Download Response",
-                                data=audio_response,
-                                file_name="ai_response.mp3",
-                                mime="audio/mp3"
-                            )
+        if audio:
+            st.audio(audio)
+            if st.button("Process Recording", key="process_recording"):
+                process_audio_response(assistant, BytesIO(audio))
+
+    with tab2:
+        audio_file = st.file_uploader("Upload audio file", type=['wav', 'mp3', 'm4a'])
+        if audio_file:
+            st.audio(audio_file)
+            if st.button("Process Upload", key="process_upload"):
+                process_audio_response(assistant, audio_file)
 
     # Add instructions
     with st.expander("How to use"):
         st.write("""
-        1. Upload an audio file containing your message
-        2. Click 'Process Audio' to get a response
-        3. Listen to the AI's response
-        4. Optionally download the response audio
-        
-        Supported formats: WAV, MP3, M4A
+        **Option 1: Record directly**
+        1. Go to the 'Record Audio' tab
+        2. Click the microphone button to start recording
+        3. Speak your message
+        4. Click again to stop recording
+        5. Click 'Process Recording' to get a response
+
+        **Option 2: Upload audio**
+        1. Go to the 'Upload Audio' tab
+        2. Upload an audio file (WAV, MP3, or M4A format)
+        3. Click 'Process Upload' to get a response
+
+        The AI will:
+        - Transcribe your audio
+        - Generate a response
+        - Convert the response to speech
+        - Allow you to download the response
         """)
 
 if __name__ == "__main__":
