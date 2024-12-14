@@ -1,43 +1,34 @@
 import streamlit as st
-from audio_recorder_streamlit import audio_recorder
-from io import BytesIO
+from st_custom_components import st_audiorec
 import openai
+from io import BytesIO
 import boto3
 import os
 from datetime import datetime
-import base64
 
-# Configure page
+# Page config
 st.set_page_config(
     page_title="Voice Assistant",
     page_icon="🎙️",
-    layout="wide",
-    initial_sidebar_state="expanded"
+    layout="wide"
 )
 
-# Apply custom CSS for dark theme
+# Custom CSS
 st.markdown("""
     <style>
-        .stApp {
-            background-color: #1E1E1E;
-            color: #FFFFFF;
-        }
-        .stButton>button {
-            background-color: #2E2E2E;
-            color: #FFFFFF;
-        }
-        .stSlider {
-            background-color: #2E2E2E;
-        }
+    .stApp {
+        background-color: #1E1E1E;
+        color: #FFFFFF;
+    }
     </style>
 """, unsafe_allow_html=True)
 
-class CloudVoiceAssistant:
+class VoiceAssistant:
     def __init__(self):
-        # Initialize OpenAI client
+        # Initialize OpenAI
         openai.api_key = st.secrets["OPENAI_API_KEY"]
         
-        # Initialize AWS client
+        # Initialize AWS Polly
         self.polly = boto3.client(
             'polly',
             aws_access_key_id=st.secrets["AWS_ACCESS_KEY_ID"],
@@ -45,42 +36,33 @@ class CloudVoiceAssistant:
             region_name=st.secrets["AWS_REGION"]
         )
 
-    def transcribe_audio(self, audio_bytes):
-        """Transcribe audio using OpenAI Whisper"""
+    def process_audio(self, audio_bytes):
         try:
-            # Save audio bytes to a temporary file
-            temp_audio = BytesIO(audio_bytes)
-            temp_audio.name = "temp.wav"
+            # Create a BytesIO object
+            audio_file = BytesIO(audio_bytes)
             
-            # Transcribe using OpenAI Whisper
-            transcript = openai.Audio.transcribe(
-                "whisper-1",
-                temp_audio
-            )
-            return transcript.text
+            # Transcribe using Whisper
+            transcript = openai.Audio.transcribe("whisper-1", audio_file)
+            return transcript["text"]
         except Exception as e:
-            st.error(f"Error transcribing audio: {str(e)}")
+            st.error(f"Error processing audio: {str(e)}")
             return None
 
     def get_ai_response(self, text):
-        """Get AI response using OpenAI GPT"""
         try:
             response = openai.ChatCompletion.create(
-                model="gpt-4-1106-preview",
+                model="gpt-4",
                 messages=[
                     {"role": "system", "content": "You are a helpful voice assistant."},
                     {"role": "user", "content": text}
-                ],
-                temperature=0.7,
-                max_tokens=150
+                ]
             )
-            return response.choices[0].message.content
+            return response.choices[0].message["content"]
         except Exception as e:
             st.error(f"Error getting AI response: {str(e)}")
             return None
 
     def text_to_speech(self, text):
-        """Convert text to speech using Amazon Polly"""
         try:
             response = self.polly.synthesize_speech(
                 Text=text,
@@ -88,71 +70,41 @@ class CloudVoiceAssistant:
                 VoiceId='Joanna',
                 Engine='neural'
             )
-            
-            # Convert the audio stream to bytes
-            audio_data = response['AudioStream'].read()
-            return audio_data
+            return response['AudioStream'].read()
         except Exception as e:
-            st.error(f"Error converting text to speech: {str(e)}")
+            st.error(f"Error converting to speech: {str(e)}")
             return None
 
 def main():
     st.title("🎙️ Voice Assistant")
-    st.write("An interactive voice assistant powered by OpenAI and Amazon Polly")
+    st.write("Record a message and I'll respond!")
 
-    # Initialize assistant
-    assistant = CloudVoiceAssistant()
+    assistant = VoiceAssistant()
 
-    # Sidebar configuration
-    st.sidebar.title("⚙️ Configuration")
-    st.sidebar.markdown("### Voice Settings")
-    st.sidebar.write("Using Amazon Polly Neural Engine")
+    # Audio recorder
+    audio_bytes = st_audiorec()
 
-    # Main interface
-    col1, col2 = st.columns(2)
-
-    with col1:
-        st.subheader("Record New Message")
-        # Using audio_recorder component
-        audio_bytes = audio_recorder(
-            text="Click to record",
-            recording_color="#e01b24",
-            neutral_color="#ffffff"
-        )
-
-        if audio_bytes:
-            st.session_state['audio_bytes'] = audio_bytes
-            st.success("Recording saved! Processing...")
+    if audio_bytes is not None:
+        # Process the audio
+        st.info("Processing your message...")
+        
+        # Get transcription
+        transcript = assistant.process_audio(audio_bytes)
+        if transcript:
+            st.write("You said:", transcript)
             
-            # Transcribe audio
-            transcript = assistant.transcribe_audio(audio_bytes)
-            if transcript:
-                st.session_state['transcript'] = transcript
-                st.write("Transcript:", transcript)
+            # Get AI response
+            ai_response = assistant.get_ai_response(transcript)
+            if ai_response:
+                st.write("Response:", ai_response)
+                
+                # Convert to speech
+                audio_response = assistant.text_to_speech(ai_response)
+                if audio_response:
+                    st.audio(audio_response, format='audio/mp3')
 
-                # Get AI response
-                ai_response = assistant.get_ai_response(transcript)
-                if ai_response:
-                    st.session_state['ai_response'] = ai_response
-                    
-                    # Convert AI response to speech
-                    audio_response = assistant.text_to_speech(ai_response)
-                    if audio_response:
-                        st.session_state['audio_response'] = audio_response
-
-    with col2:
-        st.subheader("Assistant Response")
-        if 'ai_response' in st.session_state:
-            st.write("AI Response:", st.session_state['ai_response'])
-            
-        if 'audio_response' in st.session_state:
-            st.audio(st.session_state['audio_response'], format='audio/mp3')
-
-    # Clear conversation button
-    if st.button("🗑️ Clear Conversation"):
-        for key in ['audio_bytes', 'transcript', 'ai_response', 'audio_response']:
-            if key in st.session_state:
-                del st.session_state[key]
+    # Add a clear button
+    if st.button("Clear Conversation"):
         st.experimental_rerun()
 
 if __name__ == "__main__":
