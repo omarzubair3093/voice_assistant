@@ -1,63 +1,55 @@
 import streamlit as st
-from st_custom_components import st_audiorec
+from streamlit_webrtc import webrtc_streamer, WebRtcMode
+import numpy as np
 import openai
-from io import BytesIO
 import boto3
-import os
 from datetime import datetime
+import queue
+import threading
+import logging
+import av
 
-# Page config
-st.set_page_config(
-    page_title="Voice Assistant",
-    page_icon="🎙️",
-    layout="wide"
-)
+# Configure page
+st.set_page_config(page_title="Voice Assistant", page_icon="🎙️", layout="wide")
 
-# Custom CSS
-st.markdown("""
-    <style>
-    .stApp {
-        background-color: #1E1E1E;
-        color: #FFFFFF;
-    }
-    </style>
-""", unsafe_allow_html=True)
+# Configure logging
+logging.basicConfig(level=logging.INFO)
 
-class VoiceAssistant:
+class AudioProcessor:
     def __init__(self):
-        # Initialize OpenAI
-        openai.api_key = st.secrets["OPENAI_API_KEY"]
-        
-        # Initialize AWS Polly
+        self.openai_client = openai.OpenAI(api_key=st.secrets["OPENAI_API_KEY"])
         self.polly = boto3.client(
             'polly',
             aws_access_key_id=st.secrets["AWS_ACCESS_KEY_ID"],
             aws_secret_access_key=st.secrets["AWS_SECRET_ACCESS_KEY"],
             region_name=st.secrets["AWS_REGION"]
         )
+        self.audio_queue = queue.Queue()
+        self.recording = False
 
-    def process_audio(self, audio_bytes):
+    def process_audio(self, audio_data):
         try:
-            # Create a BytesIO object
-            audio_file = BytesIO(audio_bytes)
-            
-            # Transcribe using Whisper
-            transcript = openai.Audio.transcribe("whisper-1", audio_file)
-            return transcript["text"]
+            # Convert to OpenAI format
+            response = self.openai_client.audio.transcriptions.create(
+                model="whisper-1",
+                file=audio_data,
+                response_format="text"
+            )
+            return response
         except Exception as e:
             st.error(f"Error processing audio: {str(e)}")
             return None
 
     def get_ai_response(self, text):
         try:
-            response = openai.ChatCompletion.create(
+            response = self.openai_client.chat.completions.create(
                 model="gpt-4",
                 messages=[
                     {"role": "system", "content": "You are a helpful voice assistant."},
                     {"role": "user", "content": text}
                 ]
             )
-            return response.choices[0].message["content"]
+            return response.choices[0].message.content
         except Exception as e:
             st.error(f"Error getting AI response: {str(e)}")
             return None
@@ -77,35 +69,63 @@ class VoiceAssistant:
 
 def main():
     st.title("🎙️ Voice Assistant")
-    st.write("Record a message and I'll respond!")
+    st.write("An AI voice assistant powered by OpenAI and Amazon Polly")
 
-    assistant = VoiceAssistant()
+    processor = AudioProcessor()
+    
+    # Audio recording interface
+    webrtc_ctx = webrtc_streamer(
+        key="voice-assistant",
+        mode=WebRtcMode.AUDIO_RECEIVER,
+        rtc_configuration={"iceServers": [{"urls": ["stun:stun.l.google.com:19302"]}]},
+        media_stream_constraints={"video": False, "audio": True},
+    )
 
-    # Audio recorder
-    audio_bytes = st_audiorec()
+    if "audio_buffer" not in st.session_state:
+        st.session_state["audio_buffer"] = None
 
-    if audio_bytes is not None:
-        # Process the audio
-        st.info("Processing your message...")
-        
-        # Get transcription
-        transcript = assistant.process_audio(audio_bytes)
-        if transcript:
-            st.write("You said:", transcript)
+    if webrtc_ctx.audio_receiver:
+        if not st.session_state["audio_buffer"]:
+            st.session_state["audio_buffer"] = []
+
+        def audio_callback(frame: av.AudioFrame):
+            sound = frame.to_ndarray()
+            st.session_state["audio_buffer"].append(sound)
+
+        webrtc_ctx.audio_receiver.subscribe(audio_callback)
+
+    # Process button
+    if st.button("Process Recording"):
+        if st.session_state["audio_buffer"]:
+            # Convert audio buffer to proper format
+            audio_data = np.concatenate(st.session_state["audio_buffer"], axis=0)
             
-            # Get AI response
-            ai_response = assistant.get_ai_response(transcript)
-            if ai_response:
-                st.write("Response:", ai_response)
-                
-                # Convert to speech
-                audio_response = assistant.text_to_speech(ai_response)
-                if audio_response:
-                    st.audio(audio_response, format='audio/mp3')
+            # Process the audio
+            with st.spinner("Processing audio..."):
+                transcript = processor.process_audio(audio_data)
+                if transcript:
+                    st.success("Transcription complete!")
+                    st.write("You said:", transcript)
 
-    # Add a clear button
-    if st.button("Clear Conversation"):
-        st.experimental_rerun()
+                    # Get AI response
+                    response = processor.get_ai_response(transcript)
+                    if response:
+                        st.write("AI Response:", response)
+
+                        # Convert to speech
+                        audio_response = processor.text_to_speech(response)
+                        if audio_response:
+                            st.audio(audio_response, format='audio/mp3')
+
+            # Clear the buffer
+            st.session_state["audio_buffer"] = []
+        else:
+            st.warning("No audio recorded yet. Please record something first.")
+
+    # Clear recording button
+    if st.button("Clear Recording"):
+        st.session_state["audio_buffer"] = []
+        st.success("Recording cleared!")
 
 if __name__ == "__main__":
     main()

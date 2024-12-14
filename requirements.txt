@@ -1,5 +1,6 @@
 streamlit
 openai
 boto3
-st-audio-recorder
+streamlit-webrtc
 python-dotenv
+numpy
