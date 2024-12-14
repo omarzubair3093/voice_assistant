@@ -1,4 +1,0 @@
-echo "streamlit
-openai
-boto3
-audio-recorder-streamlit" > requirements.txt
