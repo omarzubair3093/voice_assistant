@@ -68,7 +68,7 @@ async function toggleRecording() {
 </script>
 """
 
-# VoiceAssistant Class
+# Main VoiceAssistant class
 class VoiceAssistant:
     def __init__(self):
         self.openai_client = openai
@@ -80,19 +80,22 @@ class VoiceAssistant:
         )
 
     def process_audio(self, audio_data):
-        """Process audio for transcription."""
+        """Process audio by converting and sending to OpenAI Whisper."""
         try:
             audio_bytes = base64.b64decode(audio_data)
             with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as temp_file:
                 temp_file.write(audio_bytes)
                 temp_file.flush()
 
-                # Use OpenAI Whisper transcription
+                # Use OpenAI's latest transcription endpoint
                 with open(temp_file.name, "rb") as audio_file:
-                    transcript = openai.Audio.translate("whisper-1", audio_file)
+                    transcript = openai.Audio.transcribe(
+                        model="whisper-1",
+                        file=audio_file
+                    )
 
             os.unlink(temp_file.name)
-            return transcript['text']
+            return transcript["text"]
         except Exception as e:
             st.error(f"Error processing audio: {e}")
             return None
@@ -104,9 +107,9 @@ class VoiceAssistant:
                 model="gpt-4",
                 messages=[{"role": "user", "content": text}]
             )
-            return response.choices[0].message['content']
+            return response.choices[0].message.content
         except Exception as e:
-            st.error(f"Error generating AI response: {e}")
+            st.error(f"Error getting AI response: {e}")
             return None
 
     def text_to_speech(self, text):
@@ -120,10 +123,9 @@ class VoiceAssistant:
             )
             return response["AudioStream"].read()
         except Exception as e:
-            st.error(f"Error generating speech: {e}")
+            st.error(f"Error converting to speech: {e}")
             return None
 
-# Main Function
 def main():
     st.title("🎙️ Voice Assistant")
     assistant = VoiceAssistant()
@@ -135,7 +137,7 @@ def main():
         st.components.v1.html(AUDIO_RECORDER_HTML, height=300)
         audio_data = st.session_state.get("component_value")
         if audio_data and st.button("Process Recording"):
-            with st.spinner("Processing your recording..."):
+            with st.spinner("Processing..."):
                 transcript = assistant.process_audio(audio_data)
                 if transcript:
                     st.write("You said:", transcript)
@@ -150,14 +152,17 @@ def main():
     with tab2:
         audio_file = st.file_uploader("Upload Audio", type=["wav", "mp3", "m4a"])
         if audio_file and st.button("Process Upload"):
-            with st.spinner("Processing your upload..."):
+            with st.spinner("Processing..."):
                 try:
-                    # Process uploaded audio
+                    # Use OpenAI Whisper transcription for file upload
                     with tempfile.NamedTemporaryFile(delete=False, suffix=".wav") as temp_audio:
                         temp_audio.write(audio_file.read())
                         temp_audio.flush()
                         with open(temp_audio.name, "rb") as audio:
-                            transcript = openai.Audio.translate("whisper-1", audio)
+                            transcript = openai.Audio.transcribe(
+                                model="whisper-1",
+                                file=audio
+                            )
                         st.write("You said:", transcript['text'])
                         response = assistant.get_ai_response(transcript['text'])
                         if response:
@@ -167,6 +172,8 @@ def main():
                                 st.audio(tts_audio, format="audio/mp3")
                 except Exception as e:
                     st.error(f"Error processing upload: {e}")
+                finally:
+                    os.unlink(temp_audio.name)
 
 if __name__ == "__main__":
     main()
