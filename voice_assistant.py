@@ -3,6 +3,9 @@ import openai
 import boto3
 from io import BytesIO
 import base64
+from pydub import AudioSegment
+import tempfile
+import os
 
 # Page config
 st.set_page_config(page_title="Voice Assistant", page_icon="🎙️", layout="wide")
@@ -113,25 +116,37 @@ class VoiceAssistant:
         )
 
     def process_audio(self, audio_data):
+        """Process audio by converting and sending to Whisper."""
         try:
-            # Convert base64 to bytes if needed
+            # Handle the recorded audio data
             if isinstance(audio_data, str) and audio_data.startswith('data:audio'):
-                audio_data = base64.b64decode(audio_data.split(',')[1])
-            
-            # Create a BytesIO object
-            audio_file = BytesIO(audio_data)
-            audio_file.name = "recording.wav"  # Whisper needs a filename
-            
-            transcript = self.openai_client.audio.transcriptions.create(
-                model="whisper-1",
-                file=audio_file
-            )
+                # Extract the base64 audio data and convert to bytes
+                audio_bytes = base64.b64decode(audio_data.split(',')[1])
+            else:
+                # For uploaded files, use the bytes directly
+                audio_bytes = audio_data
+                
+            # Save audio bytes to a temporary file
+            with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as temp_file:
+                temp_file.write(audio_bytes)
+                temp_file.flush()
+                
+                # Create named file object for OpenAI
+                with open(temp_file.name, "rb") as audio_file:
+                    transcript = self.openai_client.audio.transcriptions.create(
+                        model="whisper-1",
+                        file=audio_file
+                    )
+                    
+            # Clean up temp file
+            os.unlink(temp_file.name)
             return transcript.text
         except Exception as e:
             st.error(f"Error processing audio: {str(e)}")
             return None
 
     def get_ai_response(self, text):
+        """Get AI response using OpenAI GPT."""
         try:
             response = self.openai_client.chat.completions.create(
                 model="gpt-4",
@@ -146,6 +161,7 @@ class VoiceAssistant:
             return None
 
     def text_to_speech(self, text):
+        """Convert text to speech using AWS Polly."""
         try:
             response = self.polly.synthesize_speech(
                 Text=text,
@@ -170,39 +186,26 @@ def main():
         st.write("Click the button below to start recording")
         
         # Embed the audio recorder
-        audio_recorder = st.components.v1.html(AUDIO_RECORDER_HTML, height=200)
-        
-        if audio_recorder:  # This will contain the base64 audio data
-            if st.button("Process Recording", key="process_recording"):
+        audio_recorder = st.components.v1.html(AUDIO_RECORDER_HTML, height=300)
+
+        if audio_recorder:  # Base64 audio data
+            if st.button("Process Recording"):
                 with st.spinner("Processing your message..."):
-                    # Process the audio
                     transcript = assistant.process_audio(audio_recorder)
                     if transcript:
                         st.write("You said:", transcript)
-                        
-                        # Get AI response
                         response = assistant.get_ai_response(transcript)
                         if response:
                             st.write("Response:", response)
-                            
-                            # Convert to speech
                             audio_response = assistant.text_to_speech(response)
                             if audio_response:
                                 st.audio(audio_response, format='audio/mp3')
-                                
-                                # Download button
-                                st.download_button(
-                                    label="Download Response",
-                                    data=audio_response,
-                                    file_name="ai_response.mp3",
-                                    mime="audio/mp3"
-                                )
 
     with tab2:
         audio_file = st.file_uploader("Upload audio file", type=['wav', 'mp3', 'm4a'])
         if audio_file:
             st.audio(audio_file)
-            if st.button("Process Upload", key="process_upload"):
+            if st.button("Process Upload"):
                 with st.spinner("Processing your message..."):
                     transcript = assistant.process_audio(audio_file.read())
                     if transcript:
@@ -213,12 +216,6 @@ def main():
                             audio_response = assistant.text_to_speech(response)
                             if audio_response:
                                 st.audio(audio_response, format='audio/mp3')
-                                st.download_button(
-                                    "Download Response",
-                                    audio_response,
-                                    "ai_response.mp3",
-                                    "audio/mp3"
-                                )
 
     with st.expander("How to use"):
         st.write("""
@@ -237,7 +234,6 @@ def main():
         - Transcribe your audio
         - Generate a response
         - Convert the response to speech
-        - Allow you to download the response
         """)
 
 if __name__ == "__main__":
