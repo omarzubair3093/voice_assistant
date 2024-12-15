@@ -150,15 +150,28 @@ def main():
         audio_file = st.file_uploader("Upload Audio", type=["wav", "mp3", "m4a"])
         if audio_file and st.button("Process Upload"):
             with st.spinner("Processing..."):
-                transcript = assistant.process_audio(base64.b64encode(audio_file.read()).decode())
-                if transcript:
-                    st.write("You said:", transcript)
-                    response = assistant.get_ai_response(transcript)
+                audio_data = audio_file.read()
+                with tempfile.NamedTemporaryFile(delete=False, suffix=".wav") as temp_audio:
+                    temp_audio.write(audio_data)
+                    temp_audio_path = temp_audio.name
+                # Correctly call OpenAI Whisper
+                try:
+                    with open(temp_audio_path, "rb") as audio:
+                        transcript = openai.Audio.transcribe(
+                            "whisper-1",
+                            audio
+                        )
+                    st.write("You said:", transcript['text'])
+                    response = assistant.get_ai_response(transcript['text'])
                     if response:
                         st.write("Response:", response)
                         tts_audio = assistant.text_to_speech(response)
                         if tts_audio:
                             st.audio(tts_audio, format="audio/mp3")
+                except Exception as e:
+                    st.error(f"Error processing upload: {e}")
+                finally:
+                    os.unlink(temp_audio_path)
 
 if __name__ == "__main__":
     main()
