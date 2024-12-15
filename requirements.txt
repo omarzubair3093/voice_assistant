@@ -2,3 +2,5 @@ streamlit
 openai
 boto3
 python-dotenv
+pydub
+ffmpeg-python
