@@ -32,7 +32,6 @@ async function toggleRecording() {
 
     try {
         if (!isRecording) {
-            // Start recording
             audioChunks = [];
             const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
             mediaRecorder = new MediaRecorder(stream);
@@ -69,7 +68,7 @@ async function toggleRecording() {
 </script>
 """
 
-# Main VoiceAssistant class
+# VoiceAssistant Class
 class VoiceAssistant:
     def __init__(self):
         self.openai_client = openai
@@ -81,18 +80,19 @@ class VoiceAssistant:
         )
 
     def process_audio(self, audio_data):
-        """Process audio by converting and sending to OpenAI Whisper."""
+        """Process audio for transcription."""
         try:
             audio_bytes = base64.b64decode(audio_data)
             with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as temp_file:
                 temp_file.write(audio_bytes)
+                temp_file.flush()
+
+                # Use OpenAI Whisper transcription
                 with open(temp_file.name, "rb") as audio_file:
-                    transcript = self.openai_client.Audio.transcribe(
-                        model="whisper-1",
-                        file=audio_file
-                    )
+                    transcript = openai.Audio.translate("whisper-1", audio_file)
+
             os.unlink(temp_file.name)
-            return transcript["text"]
+            return transcript['text']
         except Exception as e:
             st.error(f"Error processing audio: {e}")
             return None
@@ -100,13 +100,13 @@ class VoiceAssistant:
     def get_ai_response(self, text):
         """Get AI response using OpenAI GPT."""
         try:
-            response = self.openai_client.ChatCompletion.create(
+            response = openai.ChatCompletion.create(
                 model="gpt-4",
                 messages=[{"role": "user", "content": text}]
             )
-            return response.choices[0].message.content
+            return response.choices[0].message['content']
         except Exception as e:
-            st.error(f"Error getting AI response: {e}")
+            st.error(f"Error generating AI response: {e}")
             return None
 
     def text_to_speech(self, text):
@@ -120,9 +120,10 @@ class VoiceAssistant:
             )
             return response["AudioStream"].read()
         except Exception as e:
-            st.error(f"Error converting to speech: {e}")
+            st.error(f"Error generating speech: {e}")
             return None
 
+# Main Function
 def main():
     st.title("🎙️ Voice Assistant")
     assistant = VoiceAssistant()
@@ -134,7 +135,7 @@ def main():
         st.components.v1.html(AUDIO_RECORDER_HTML, height=300)
         audio_data = st.session_state.get("component_value")
         if audio_data and st.button("Process Recording"):
-            with st.spinner("Processing..."):
+            with st.spinner("Processing your recording..."):
                 transcript = assistant.process_audio(audio_data)
                 if transcript:
                     st.write("You said:", transcript)
@@ -149,29 +150,23 @@ def main():
     with tab2:
         audio_file = st.file_uploader("Upload Audio", type=["wav", "mp3", "m4a"])
         if audio_file and st.button("Process Upload"):
-            with st.spinner("Processing..."):
-                audio_data = audio_file.read()
-                with tempfile.NamedTemporaryFile(delete=False, suffix=".wav") as temp_audio:
-                    temp_audio.write(audio_data)
-                    temp_audio_path = temp_audio.name
-                # Correctly call OpenAI Whisper
+            with st.spinner("Processing your upload..."):
                 try:
-                    with open(temp_audio_path, "rb") as audio:
-                        transcript = openai.Audio.transcribe(
-                            "whisper-1",
-                            audio
-                        )
-                    st.write("You said:", transcript['text'])
-                    response = assistant.get_ai_response(transcript['text'])
-                    if response:
-                        st.write("Response:", response)
-                        tts_audio = assistant.text_to_speech(response)
-                        if tts_audio:
-                            st.audio(tts_audio, format="audio/mp3")
+                    # Process uploaded audio
+                    with tempfile.NamedTemporaryFile(delete=False, suffix=".wav") as temp_audio:
+                        temp_audio.write(audio_file.read())
+                        temp_audio.flush()
+                        with open(temp_audio.name, "rb") as audio:
+                            transcript = openai.Audio.translate("whisper-1", audio)
+                        st.write("You said:", transcript['text'])
+                        response = assistant.get_ai_response(transcript['text'])
+                        if response:
+                            st.write("Response:", response)
+                            tts_audio = assistant.text_to_speech(response)
+                            if tts_audio:
+                                st.audio(tts_audio, format="audio/mp3")
                 except Exception as e:
                     st.error(f"Error processing upload: {e}")
-                finally:
-                    os.unlink(temp_audio_path)
 
 if __name__ == "__main__":
     main()
