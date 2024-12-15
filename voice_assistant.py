@@ -126,20 +126,26 @@ class VoiceAssistant:
                 # For uploaded files, use the bytes directly
                 audio_bytes = audio_data
                 
-            # Save audio bytes to a temporary file
+            # Save audio bytes to a temporary file with .wav extension
             with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as temp_file:
                 temp_file.write(audio_bytes)
                 temp_file.flush()
                 
+                # Convert to supported format if necessary
+                audio = AudioSegment.from_file(temp_file.name)
+                converted_temp = tempfile.NamedTemporaryFile(suffix=".mp3", delete=False)
+                audio.export(converted_temp.name, format="mp3")
+                
                 # Create named file object for OpenAI
-                with open(temp_file.name, "rb") as audio_file:
+                with open(converted_temp.name, "rb") as audio_file:
                     transcript = self.openai_client.audio.transcriptions.create(
                         model="whisper-1",
                         file=audio_file
                     )
                     
-            # Clean up temp file
+            # Clean up temp files
             os.unlink(temp_file.name)
+            os.unlink(converted_temp.name)
             return transcript.text
         except Exception as e:
             st.error(f"Error processing audio: {str(e)}")
@@ -185,13 +191,21 @@ def main():
     with tab1:
         st.write("Click the button below to start recording")
         
+        # Create a placeholder for the recorded audio data
+        if "recorded_audio" not in st.session_state:
+            st.session_state.recorded_audio = None
+        
         # Embed the audio recorder
         audio_recorder = st.components.v1.html(AUDIO_RECORDER_HTML, height=300)
+        
+        # Store the recorded audio data in session state when available
+        if audio_recorder is not None:
+            st.session_state.recorded_audio = audio_recorder
 
-        if audio_recorder:  # Base64 audio data
+        if st.session_state.recorded_audio:
             if st.button("Process Recording"):
                 with st.spinner("Processing your message..."):
-                    transcript = assistant.process_audio(audio_recorder)
+                    transcript = assistant.process_audio(st.session_state.recorded_audio)
                     if transcript:
                         st.write("You said:", transcript)
                         response = assistant.get_ai_response(transcript)
@@ -207,6 +221,8 @@ def main():
             st.audio(audio_file)
             if st.button("Process Upload"):
                 with st.spinner("Processing your message..."):
+                    # Reset buffer position before reading
+                    audio_file.seek(0)
                     transcript = assistant.process_audio(audio_file.read())
                     if transcript:
                         st.write("You said:", transcript)

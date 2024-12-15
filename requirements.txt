@@ -1,6 +1,6 @@
-streamlit
-openai
-boto3
-python-dotenv
-pydub
-ffmpeg-python
+streamlit==1.32.0
+openai==1.13.3
+boto3==1.34.51
+python-dotenv==1.0.1
+pydub==0.25.1
+ffmpeg-python==0.2.0
