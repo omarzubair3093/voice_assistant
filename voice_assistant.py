@@ -30,48 +30,84 @@ async function toggleRecording() {
     const audioPlayback = document.getElementById('audioPlayback');
     const audioData = document.getElementById('audioData');
 
-    try {
-        if (!isRecording) {
-            audioChunks = [];
-            const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-            mediaRecorder = new MediaRecorder(stream);
+    if (!isRecording) {
+        // Start recording
+        audioChunks = [];
+        const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+        mediaRecorder = new MediaRecorder(stream);
+        
+        mediaRecorder.ondataavailable = (event) => {
+            audioChunks.push(event.data);
+        };
 
-            mediaRecorder.ondataavailable = (event) => {
-                audioChunks.push(event.data);
+        mediaRecorder.onstop = () => {
+            const audioBlob = new Blob(audioChunks, { type: 'audio/wav' });
+            const audioUrl = URL.createObjectURL(audioBlob);
+            audioPlayback.src = audioUrl;
+            audioPlayback.style.display = 'block';
+            
+            // Convert to base64
+            const reader = new FileReader();
+            reader.readAsDataURL(audioBlob);
+            reader.onloadend = () => {
+                const base64data = reader.result;
+                audioData.value = base64data;
+                
+                // Notify Streamlit
+                window.parent.postMessage({
+                    type: "streamlit:setComponentValue",
+                    value: base64data
+                }, "*");
             };
+        };
 
-            mediaRecorder.onstop = () => {
-                const audioBlob = new Blob(audioChunks, { type: 'audio/wav' });
-                const reader = new FileReader();
-                reader.readAsDataURL(audioBlob);
-                reader.onloadend = () => {
-                    audioData.value = reader.result.split(',')[1];
-                    window.parent.postMessage({ type: "streamlit:setComponentValue", value: reader.result.split(',')[1] }, "*");
-                };
-            };
-
-            mediaRecorder.start();
-            button.textContent = 'Stop Recording';
-            status.textContent = 'Recording...';
-            isRecording = true;
-        } else {
-            mediaRecorder.stop();
-            button.textContent = 'Start Recording';
-            status.textContent = 'Recording stopped.';
-            isRecording = false;
-        }
-    } catch (error) {
-        status.textContent = "Error: Unable to access microphone.";
-        console.error("Microphone error:", error);
+        mediaRecorder.start();
+        button.textContent = 'Stop Recording';
+        status.textContent = 'Recording...';
+        isRecording = true;
+    } else {
+        // Stop recording
+        mediaRecorder.stop();
+        button.textContent = 'Start Recording';
+        status.textContent = 'Recording stopped';
+        isRecording = false;
+        
+        // Stop all tracks
+        mediaRecorder.stream.getTracks().forEach(track => track.stop());
     }
 }
 </script>
+
+<style>
+#recordButton {
+    background-color: #FF4B4B;
+    color: white;
+    border: none;
+    padding: 10px 20px;
+    border-radius: 5px;
+    cursor: pointer;
+    margin: 10px 0;
+}
+
+#recordButton:hover {
+    background-color: #FF3333;
+}
+
+#status {
+    color: #666;
+    margin: 10px 0;
+}
+
+#audioPlayback {
+    margin: 10px 0;
+    width: 100%;
+}
+</style>
 """
 
-# Main VoiceAssistant class
 class VoiceAssistant:
     def __init__(self):
-        self.openai_client = openai
+        self.openai_client = openai.OpenAI(api_key=st.secrets["OPENAI_API_KEY"])
         self.polly = boto3.client(
             'polly',
             aws_access_key_id=st.secrets["AWS_ACCESS_KEY_ID"],
@@ -80,36 +116,48 @@ class VoiceAssistant:
         )
 
     def process_audio(self, audio_data):
-        """Process audio by converting and sending to OpenAI Whisper."""
+        """Process audio by converting and sending to Whisper."""
         try:
-            audio_bytes = base64.b64decode(audio_data)
+            # Handle the recorded audio data
+            if isinstance(audio_data, str) and audio_data.startswith('data:audio'):
+                # Extract the base64 audio data and convert to bytes
+                audio_bytes = base64.b64decode(audio_data.split(',')[1])
+            else:
+                # For uploaded files, use the bytes directly
+                audio_bytes = audio_data
+                
+            # Save audio bytes to a temporary file
             with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as temp_file:
                 temp_file.write(audio_bytes)
                 temp_file.flush()
-
-                # Use OpenAI's latest transcription endpoint
+                
+                # Create named file object for OpenAI
                 with open(temp_file.name, "rb") as audio_file:
-                    transcript = openai.Audio.transcribe(
+                    transcript = self.openai_client.audio.transcriptions.create(
                         model="whisper-1",
                         file=audio_file
                     )
-
+                    
+            # Clean up temp file
             os.unlink(temp_file.name)
-            return transcript["text"]
+            return transcript.text
         except Exception as e:
-            st.error(f"Error processing audio: {e}")
+            st.error(f"Error processing audio: {str(e)}")
             return None
 
     def get_ai_response(self, text):
         """Get AI response using OpenAI GPT."""
         try:
-            response = openai.ChatCompletion.create(
+            response = self.openai_client.chat.completions.create(
                 model="gpt-4",
-                messages=[{"role": "user", "content": text}]
+                messages=[
+                    {"role": "system", "content": "You are a helpful voice assistant."},
+                    {"role": "user", "content": text}
+                ]
             )
             return response.choices[0].message.content
         except Exception as e:
-            st.error(f"Error getting AI response: {e}")
+            st.error(f"Error getting AI response: {str(e)}")
             return None
 
     def text_to_speech(self, text):
@@ -117,63 +165,76 @@ class VoiceAssistant:
         try:
             response = self.polly.synthesize_speech(
                 Text=text,
-                OutputFormat="mp3",
-                VoiceId="Joanna",
-                Engine="neural"
+                OutputFormat='mp3',
+                VoiceId='Joanna',
+                Engine='neural'
             )
-            return response["AudioStream"].read()
+            return response['AudioStream'].read()
         except Exception as e:
-            st.error(f"Error converting to speech: {e}")
+            st.error(f"Error converting to speech: {str(e)}")
             return None
 
 def main():
     st.title("🎙️ Voice Assistant")
+    st.write("Record a message or upload an audio file!")
+
     assistant = VoiceAssistant()
 
     tab1, tab2 = st.tabs(["Record Audio", "Upload Audio"])
 
-    # Tab 1: Record Audio
     with tab1:
-        st.components.v1.html(AUDIO_RECORDER_HTML, height=300)
-        audio_data = st.session_state.get("component_value")
-        if audio_data and st.button("Process Recording"):
-            with st.spinner("Processing..."):
-                transcript = assistant.process_audio(audio_data)
-                if transcript:
-                    st.write("You said:", transcript)
-                    response = assistant.get_ai_response(transcript)
-                    if response:
-                        st.write("Response:", response)
-                        tts_audio = assistant.text_to_speech(response)
-                        if tts_audio:
-                            st.audio(tts_audio, format="audio/mp3")
+        st.write("Click the button below to start recording")
+        
+        # Embed the audio recorder
+        audio_recorder = st.components.v1.html(AUDIO_RECORDER_HTML, height=300)
 
-    # Tab 2: Upload Audio
-    with tab2:
-        audio_file = st.file_uploader("Upload Audio", type=["wav", "mp3", "m4a"])
-        if audio_file and st.button("Process Upload"):
-            with st.spinner("Processing..."):
-                try:
-                    # Use OpenAI Whisper transcription for file upload
-                    with tempfile.NamedTemporaryFile(delete=False, suffix=".wav") as temp_audio:
-                        temp_audio.write(audio_file.read())
-                        temp_audio.flush()
-                        with open(temp_audio.name, "rb") as audio:
-                            transcript = openai.Audio.transcribe(
-                                model="whisper-1",
-                                file=audio
-                            )
-                        st.write("You said:", transcript['text'])
-                        response = assistant.get_ai_response(transcript['text'])
+        if audio_recorder:  # Base64 audio data
+            if st.button("Process Recording"):
+                with st.spinner("Processing your message..."):
+                    transcript = assistant.process_audio(audio_recorder)
+                    if transcript:
+                        st.write("You said:", transcript)
+                        response = assistant.get_ai_response(transcript)
                         if response:
                             st.write("Response:", response)
-                            tts_audio = assistant.text_to_speech(response)
-                            if tts_audio:
-                                st.audio(tts_audio, format="audio/mp3")
-                except Exception as e:
-                    st.error(f"Error processing upload: {e}")
-                finally:
-                    os.unlink(temp_audio.name)
+                            audio_response = assistant.text_to_speech(response)
+                            if audio_response:
+                                st.audio(audio_response, format='audio/mp3')
+
+    with tab2:
+        audio_file = st.file_uploader("Upload audio file", type=['wav', 'mp3', 'm4a'])
+        if audio_file:
+            st.audio(audio_file)
+            if st.button("Process Upload"):
+                with st.spinner("Processing your message..."):
+                    transcript = assistant.process_audio(audio_file.read())
+                    if transcript:
+                        st.write("You said:", transcript)
+                        response = assistant.get_ai_response(transcript)
+                        if response:
+                            st.write("Response:", response)
+                            audio_response = assistant.text_to_speech(response)
+                            if audio_response:
+                                st.audio(audio_response, format='audio/mp3')
+
+    with st.expander("How to use"):
+        st.write("""
+        **Option 1: Record directly**
+        1. Click 'Start Recording'
+        2. Allow microphone access if prompted
+        3. Speak your message
+        4. Click 'Stop Recording'
+        5. Click 'Process Recording' to get a response
+
+        **Option 2: Upload audio**
+        1. Upload an audio file (WAV, MP3, or M4A format)
+        2. Click 'Process Upload' to get a response
+
+        The AI will:
+        - Transcribe your audio
+        - Generate a response
+        - Convert the response to speech
+        """)
 
 if __name__ == "__main__":
     main()
